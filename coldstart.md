@@ -304,6 +304,18 @@ Font default system/Tailwind (`font-sans`) sudah cukup — bersih, native tiap O
 
 **Aturan:** Setiap keputusan, perubahan, dan progres implementasi dicatat di bagian ini secara kronologis (paling baru di atas).
 
+### 28 Agustus 2026 — Fix error build Vercel (Prisma client tidak ter-generate)
+
+**Status:** ✅ Root cause teratasi; `npm run build` (flow Vercel: prebuild → prisma generate → next build) lolos.
+
+**Masalah:** Build Vercel gagal dengan `TS2305: '@prisma/client' has no exported member 'PrismaClient'` + rentetan `TS7006` (parameter `t`/`n`/`u`/`c` implicit any) di `onboarding.ts`, `reminders.ts`, `summary.ts`.
+
+**Root cause:** Semua error itu **gejala dari satu akar masalah**: di lingkungan Vercel, **client Prisma tidak ter-generate** sebelum `next build` jalankan type-check. Karena `postinstall` hanya `prisma skills sync || exit 0` (bukan `prisma generate`), dan auto-generate `@prisma/client` kadang di-skip Vercel → `node_modules/.prisma/client` kosong → `PrismaClient` tidak diekspor (TS2305) → tipe semua model hilang → callback `.then((t)=>…)` / `.map((u)=>…)` jadi implicit any (TS7006). Build lokal lolos karena client sudah ter-generate lokal.
+
+**Fix:** Tambah script **`"prebuild": "prisma generate"`** di `package.json`. npm/Vercel otomatis menjalankan `prebuild` sebelum `build`, sehingga client ter-generate dulu sebelum type-check.
+
+**Verifikasi:** Hapus `node_modules/.prisma/client` (simulasi kondisi Vercel yang gagal) → `npm run prebuild` (generate v7.10.0) → `npx tsc --noEmit` = 0 error → `npm run build` (dgn client dihapus dulu) = ✅ lolos.
+
 ### 28 Agustus 2026 — Persiapan Deploy ke Vercel (siapkan env + petunjuk)
 
 **Status:** ✅ Config & env siap; keputusan deploy-test disepakati (sender `onboarding@resend.dev`). Deploy dilakukan user ke Vercel.
