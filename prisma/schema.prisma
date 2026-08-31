@@ -1,0 +1,171 @@
+// AsyncStandup — Prisma schema
+// Diterjemahkan 1:1 dari coldstart.md seksi 6 (Database Schema PostgreSQL).
+// Naming convention: snake_case plural tabel, PK `id` UUID, FK `<tabel_singular>_id`.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------- teams ----------
+model Team {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @db.VarChar(255)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users          User[]
+  checkins       Checkin[]
+  summaryReports SummaryReport[]
+}
+
+// ---------- users ----------
+model User {
+  id            String    @id @default(uuid()) @db.Uuid
+  teamId        String    @db.Uuid
+  name          String    @db.VarChar(255)
+  email         String    @unique @db.VarChar(255)
+  emailVerified DateTime? // dipakai NextAuth (email magic link)
+  image         String?   // dipakai NextAuth
+  role          String    @db.VarChar(20) // CHECK IN ('member', 'lead') — divalidasi di app layer
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  team                Team                @relation(fields: [teamId], references: [id])
+  checkins            Checkin[]
+  blockersReported    Blocker[]           @relation("BlockerReportedBy")
+  blockersTaggedTo    Blocker[]           @relation("BlockerTaggedTo")
+  reminderSetting     ReminderSetting?
+  notifications       Notification[]
+  summaryReports      SummaryReport[]     @relation("SummaryReportRecipient")
+  accounts            Account[]
+  sessions            Session[]
+
+  @@index([teamId])
+}
+
+// ---------- NextAuth.js (Auth.js) tables ----------
+// Diperlukan oleh @auth/prisma-adapter untuk flow email magic link.
+model Account {
+  id                String  @id @default(uuid()) @db.Uuid
+  userId            String  @db.Uuid
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(uuid()) @db.Uuid
+  sessionToken String   @unique
+  userId       String   @db.Uuid
+  expires      DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ---------- checkins ----------
+model Checkin {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @db.Uuid
+  teamId         String   @db.Uuid // denormalized
+  checkinDate    DateTime @db.Date
+  yesterdayUpdate String  @db.Text
+  todayPlan      String   @db.Text
+  blockerNote    String?  @db.Text
+  hasBlocker     Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  user     User      @relation(fields: [userId], references: [id])
+  team     Team      @relation(fields: [teamId], references: [id])
+  blockers Blocker[]
+
+  @@unique([userId, checkinDate])
+  @@index([teamId, checkinDate])
+}
+
+// ---------- blockers ----------
+model Blocker {
+  id          String    @id @default(uuid()) @db.Uuid
+  checkinId   String    @db.Uuid
+  reportedBy  String    @db.Uuid
+  taggedTo    String?   @db.Uuid // Nullable
+  status      String    @default("open") @db.VarChar(20) // CHECK IN ('open', 'resolved')
+  createdAt   DateTime  @default(now())
+  resolvedAt  DateTime? // Nullable
+
+  checkin   Checkin @relation(fields: [checkinId], references: [id])
+  reporter  User    @relation("BlockerReportedBy", fields: [reportedBy], references: [id])
+  taggedUser User?  @relation("BlockerTaggedTo", fields: [taggedTo], references: [id])
+}
+
+// ---------- reminder_settings ----------
+model ReminderSetting {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @unique @db.Uuid
+  reminderTime String   @db.VarChar(5) // 'HH:MM' 24h — pengganti tipe TIME (Prisma tak dukung String+TIME)
+  timezone     String   @db.VarChar(50) // IANA, mis. 'Asia/Jakarta'
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+// ---------- notifications ----------
+model Notification {
+  id               String   @id @default(uuid()) @db.Uuid
+  recipientId      String   @db.Uuid
+  type             String   @db.VarChar(30) // CHECK IN ('blocker_alert', 'checkin_reminder', 'summary_report')
+  relatedCheckinId String?  @db.Uuid
+  relatedBlockerId String?  @db.Uuid
+  message          String   @db.Text
+  isRead           Boolean  @default(false)
+  sentAt           DateTime @default(now())
+
+  recipient User @relation(fields: [recipientId], references: [id])
+
+  @@index([recipientId])
+}
+
+// ---------- summary_reports ----------
+model SummaryReport {
+  id          String   @id @default(uuid()) @db.Uuid
+  teamId      String   @db.Uuid
+  recipientId String   @db.Uuid // Team Lead
+  reportType  String   @db.VarChar(10) // CHECK IN ('daily', 'weekly')
+  periodStart DateTime @db.Date
+  periodEnd   DateTime @db.Date
+  content     String   @db.Text
+  generatedAt DateTime @default(now())
+
+  team      Team @relation(fields: [teamId], references: [id])
+  recipient User @relation("SummaryReportRecipient", fields: [recipientId], references: [id])
+
+  @@index([teamId, generatedAt])
+}
